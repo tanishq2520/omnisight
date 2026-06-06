@@ -49,6 +49,9 @@ class _CameraScreenState extends State<CameraScreen> {
   // WebSocket
   WebSocketChannel? _channel;
 
+  // Demo UX: flag set when AI response arrives to cancel pending announcements.
+  bool _responseReceived = false;
+
   @override
   void initState() {
     super.initState();
@@ -66,8 +69,15 @@ class _CameraScreenState extends State<CameraScreen> {
       debugPrint('WebSocket Connected');
 
       _channel!.stream.listen(
-        (message) {
+        (message) async {
           debugPrint('Received: $message');
+          _responseReceived = true;
+          await _tts.stop();
+          await _tts.setLanguage('en-US');
+          await _tts.setSpeechRate(0.45);
+          await _tts.setVolume(1.0);
+          await _tts.setPitch(1.0);
+          await _tts.speak(message.toString());
         },
         onError: (error) {
           debugPrint('WebSocket Error');
@@ -124,13 +134,64 @@ class _CameraScreenState extends State<CameraScreen> {
     await _tts.speak('OmniSight Active');
   }
 
+  // Single tap — scene description with staged voice feedback
   Future<void> _speakScanning() async {
+    _responseReceived = false;
+    // Backend capture runs in parallel — fires immediately, independent of speech.
+    _captureAndSend('SCENE');
+
     await _tts.setLanguage('en-US');
     await _tts.setSpeechRate(0.45);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
-    await _tts.speak('Scanning');
+    await _tts.awaitSpeakCompletion(true); // each speak() blocks until audio done
 
+    // Stage 1 — immediate
+    await _tts.speak('Scanning surroundings.');
+
+    // Delay after 'Scanning surroundings' finishes: wait 2 seconds
+    if (!_responseReceived) {
+      await Future.delayed(const Duration(seconds: 2));
+    }
+
+    // Stage 2 — after stage 1 finishes speaking
+    if (!_responseReceived) {
+      await _tts.speak('Capturing details.');
+    }
+
+    // Delay after 'Capturing details' finishes: wait 3 seconds
+    if (!_responseReceived) {
+      await Future.delayed(const Duration(seconds: 3));
+    }
+
+    // Stage 3 — after stage 2 finishes speaking
+    if (!_responseReceived) {
+      await _tts.speak('Analyzing the environment.');
+    }
+
+    // Delay after 'Analyzing the environment' finishes: wait 3 seconds
+    if (!_responseReceived) {
+      await Future.delayed(const Duration(seconds: 3));
+    }
+
+    // Stage 4 — after stage 3 finishes speaking
+    if (!_responseReceived) {
+      await _tts.speak('Almost done.');
+    }
+  }
+
+  // Double tap — OCR / text reading
+  Future<void> _speakReading() async {
+    await _tts.setLanguage('en-US');
+    await _tts.setSpeechRate(0.45);
+    await _tts.setVolume(1.0);
+    await _tts.setPitch(1.0);
+    await _tts.speak('Reading text');
+    await _captureAndSend('OCR');
+  }
+
+  // Shared: capture image and send with mode prefix
+  Future<void> _captureAndSend(String mode) async {
     try {
       final XFile imageFile = await _controller.takePicture();
       debugPrint('Captured image');
@@ -139,9 +200,10 @@ class _CameraScreenState extends State<CameraScreen> {
       debugPrint('Image size: ${imageBytes.length}');
 
       final String base64Image = base64Encode(imageBytes);
+      final String payload = 'MODE:$mode|$base64Image';
       debugPrint('Sending image...');
 
-      _channel?.sink.add(base64Image);
+      _channel?.sink.add(payload);
       debugPrint('Image sent successfully');
     } catch (e) {
       debugPrint('Image capture error: $e');
@@ -195,6 +257,7 @@ class _CameraScreenState extends State<CameraScreen> {
           if (snapshot.connectionState == ConnectionState.done) {
             return GestureDetector(
               onTap: _speakScanning,
+              onDoubleTap: _speakReading,
               child: SizedBox.expand(
                 child: FittedBox(
                   fit: BoxFit.cover,
