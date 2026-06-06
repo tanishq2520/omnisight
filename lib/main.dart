@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -127,7 +130,22 @@ class _CameraScreenState extends State<CameraScreen> {
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
     await _tts.speak('Scanning');
-    _channel?.sink.add('scan');
+
+    try {
+      final XFile imageFile = await _controller.takePicture();
+      debugPrint('Captured image');
+
+      final Uint8List imageBytes = await File(imageFile.path).readAsBytes();
+      debugPrint('Image size: ${imageBytes.length}');
+
+      final String base64Image = base64Encode(imageBytes);
+      debugPrint('Sending image...');
+
+      _channel?.sink.add(base64Image);
+      debugPrint('Image sent successfully');
+    } catch (e) {
+      debugPrint('Image capture error: $e');
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
