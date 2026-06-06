@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -52,6 +53,14 @@ class _CameraScreenState extends State<CameraScreen> {
   // Demo UX: flag set when AI response arrives to cancel pending announcements.
   bool _responseReceived = false;
 
+  Timer? _fillerTimer;
+  int _fillerIndex = 0;
+  final List<String> _fillerMessages = [
+    'Analyzing.',
+    'Understanding the environment.',
+    'Finalizing response.',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -72,6 +81,7 @@ class _CameraScreenState extends State<CameraScreen> {
         (message) async {
           debugPrint('Received: $message');
           _responseReceived = true;
+          _fillerTimer?.cancel();
           await _tts.stop();
           await _tts.setLanguage('en-US');
           await _tts.setSpeechRate(0.45);
@@ -137,8 +147,10 @@ class _CameraScreenState extends State<CameraScreen> {
   // Single tap — scene description with staged voice feedback
   Future<void> _speakScanning() async {
     _responseReceived = false;
-    // Backend capture runs in parallel — fires immediately, independent of speech.
-    _captureAndSend('SCENE');
+    _fillerTimer?.cancel();
+
+    // Start capture and send in parallel
+    final captureFuture = _captureAndSend('SCENE');
 
     await _tts.setLanguage('en-US');
     await _tts.setSpeechRate(0.45);
@@ -149,35 +161,32 @@ class _CameraScreenState extends State<CameraScreen> {
     // Stage 1 — immediate
     await _tts.speak('Scanning surroundings.');
 
-    // Delay after 'Scanning surroundings' finishes: wait 2 seconds
+    // Wait for the capture and send to finish
+    await captureFuture;
+
+    // Stage 2 — immediately after image captured and sent
     if (!_responseReceived) {
-      await Future.delayed(const Duration(seconds: 2));
+      await _tts.speak('Image captured.');
     }
 
-    // Stage 2 — after stage 1 finishes speaking
+    // Start periodic filler timer
     if (!_responseReceived) {
-      await _tts.speak('Capturing details.');
+      _startFillerTimer();
     }
+  }
 
-    // Delay after 'Capturing details' finishes: wait 3 seconds
-    if (!_responseReceived) {
-      await Future.delayed(const Duration(seconds: 3));
-    }
-
-    // Stage 3 — after stage 2 finishes speaking
-    if (!_responseReceived) {
-      await _tts.speak('Analyzing the environment.');
-    }
-
-    // Delay after 'Analyzing the environment' finishes: wait 3 seconds
-    if (!_responseReceived) {
-      await Future.delayed(const Duration(seconds: 3));
-    }
-
-    // Stage 4 — after stage 3 finishes speaking
-    if (!_responseReceived) {
-      await _tts.speak('Almost done.');
-    }
+  void _startFillerTimer() {
+    _fillerTimer?.cancel();
+    _fillerIndex = 0;
+    _fillerTimer = Timer.periodic(const Duration(milliseconds: 2500), (timer) async {
+      if (_responseReceived) {
+        timer.cancel();
+        return;
+      }
+      final String message = _fillerMessages[_fillerIndex];
+      _fillerIndex = (_fillerIndex + 1) % _fillerMessages.length;
+      await _tts.speak(message);
+    });
   }
 
   // Double tap — OCR / text reading
@@ -214,6 +223,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   void dispose() {
+    _fillerTimer?.cancel();
     _tts.stop();
     _channel?.sink.close();
     if (_permissionsGranted == true) {
